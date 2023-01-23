@@ -144,9 +144,11 @@ export function Classic({
 
       const groupID = isString(game.get("groupID"));
 
+      const players = game.players.filter((p) => !p.get("ended"));
+
       const participantIDs: string[] = [];
       const nodeIDs = [game.id, groupID];
-      for (const player of game.players) {
+      for (const player of players) {
         nodeIDs.push(player.id);
         participantIDs.push(player.participantID!);
         const playerGameID = player.get(`playerGameID-${game.id}`) as
@@ -180,7 +182,6 @@ export function Classic({
     }
 
     _.on(TajribaEvent.ParticipantConnect, async (ctx, { participant }) => {
-      // console.log("ON PARTICIPANT", participant.id);
       online.set(participant.id, participant);
 
       const player = playersForParticipant.get(participant.id);
@@ -193,6 +194,11 @@ export function Classic({
               {
                 key: "participantID",
                 value: participant.id,
+                immutable: true,
+              },
+              {
+                key: "participantIdentifier",
+                value: participant.identifier,
                 immutable: true,
               },
             ]),
@@ -210,7 +216,6 @@ export function Classic({
     });
 
     _.on("player", async (ctx, { player }: { player: Player }) => {
-      // console.log("ON PLAYER", player.id);
       const participantID = isString(player.get("participantID"));
 
       player.participantID = participantID;
@@ -302,6 +307,10 @@ export function Classic({
             checkShouldOpenExperiment(ctx);
 
             break;
+          case "created":
+            // noop
+
+            break;
           default:
             warn("unknown batch status:", status);
 
@@ -321,6 +330,7 @@ export function Classic({
         }
 
         case "ended":
+        case "failed":
         case "terminated":
           for (const player of game.players) {
             player.set("ended", `game ${status}`);
@@ -429,7 +439,9 @@ export function Classic({
       const game = isGame(player.currentGame);
       const treatment = treatmentSchema.parse(game.get("treatment"));
       const playerCount = treatment["playerCount"] as number;
-      const readyPlayers = game.players.filter((p) => p.get("introDone"));
+      const readyPlayers = game.players.filter(
+        (p) => p.get("introDone") && !p.get("ended")
+      );
 
       if (readyPlayers.length < playerCount) {
         trace("introDone: not enough players ready yet");
@@ -603,7 +615,7 @@ export function Classic({
           return;
         }
 
-        if (players.every((p) => p.stage!.get("submit"))) {
+        if (players.every((p) => p.stage!.get("submit") || p.get("ended"))) {
           ctx.addTransitions([
             {
               from: State.Running,
@@ -700,8 +712,13 @@ export function Classic({
     _.on(
       TajribaEvent.TransitionAdd,
       (_, { step, transition: { from, to } }: TransitionAdd) => {
-        const hasStage = Boolean(stageForStepID.get(step.id));
-        debug(`transition: ${from} => ${to} (has stage: ${hasStage})`);
+        console.log("stage transition check");
+        const stage = stageForStepID.get(step.id);
+        if (!stage) {
+          return;
+        }
+
+        debug(`transition stage: ${from} => ${to}`);
 
         if (from === State.Running && to === State.Ended) {
           const stage = isStage(stageForStepID.get(step.id));
